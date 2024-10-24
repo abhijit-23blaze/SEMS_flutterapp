@@ -3,6 +3,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'package:flutter/services.dart'; // Add this import
+
 
 void main() => runApp(const MyApp());
 
@@ -13,7 +15,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'SEMS',
-      debugShowCheckedModeBanner: false,  // Removes debug banner
+      debugShowCheckedModeBanner: false, // Removes debug banner
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
@@ -36,9 +38,12 @@ class _LightControlPageState extends State<LightControlPage> {
   String lightStatus = "LIGHT OFF";
   Timer? reconnectionTimer;
   Timer? heartbeatTimer;
+  Timer? pingTimer;
+  DateTime? lastPingSentTime;
+  String estimatedDistance = "Unknown";
 
   // Server IP address
-  final String serverIp = "192.168.1.100"; // Replace with your server's IP
+  final String serverIp = "10.0.52.145"; // Replace with your server's IP
 
   @override
   void initState() {
@@ -71,6 +76,17 @@ class _LightControlPageState extends State<LightControlPage> {
 
             if (data['type'] == 'status') {
               lightStatus = data['status'];
+            } else if (data['type'] == 'ping') {
+              // Respond to ping with current timestamp
+              channel?.sink.add(json.encode({
+                "type": "ping_response",
+                "timestamp": DateTime.now().millisecondsSinceEpoch
+              }));
+            } else if (data['type'] == 'distance_update') {
+              // Handle the distance update from server
+              double distance = data['distance'];
+              int rtt = data['rtt'];
+              estimatedDistance = "${distance.toStringAsFixed(2)} meters (RTT: ${rtt}ms)";
             }
           });
         },
@@ -101,10 +117,32 @@ class _LightControlPageState extends State<LightControlPage> {
     }
   }
 
+  void handlePingResponse(int timestamp) {
+    // RTT Calculation
+    DateTime now = DateTime.now();
+    int pingReceivedTime = now.millisecondsSinceEpoch;
+    int rttMilliseconds = pingReceivedTime - timestamp;
+
+    // Rough estimate of distance
+    double distance = calculateDistance(rttMilliseconds);
+
+    setState(() {
+      estimatedDistance = "${distance.toStringAsFixed(2)} meters";
+    });
+  }
+
+  double calculateDistance(int rttMilliseconds) {
+    // Convert RTT to seconds and calculate distance (speed of light = 3e8 m/s)
+    double rttSeconds = rttMilliseconds / 1000.0;
+    double distance = (rttSeconds / 2) * 3e8; // Distance formula
+    return distance / 1e9; // Convert to meters (as speed is in meters per second)
+  }
+
   void handleDisconnection() {
     setState(() {
       isConnected = false;
       lightStatus = "LIGHT OFF";
+      estimatedDistance = "Unknown";
     });
 
     channel?.sink.close();
@@ -121,7 +159,7 @@ class _LightControlPageState extends State<LightControlPage> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        centerTitle: true,  // Centers the title
+        centerTitle: true, // Centers the title
         actions: [
           Padding(
             padding: const EdgeInsets.all(8.0),
@@ -156,6 +194,11 @@ class _LightControlPageState extends State<LightControlPage> {
             const SizedBox(height: 10),
             Text(
               'Server: $serverIp',
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Estimated Distance: $estimatedDistance',
               style: Theme.of(context).textTheme.bodyLarge,
             ),
           ],
